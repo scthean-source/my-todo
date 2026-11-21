@@ -10,9 +10,11 @@
             padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
     h1 { margin-top: 0; font-size: 1.4rem; }
     form { display: flex; gap: 8px; margin-bottom: 16px; }
-    input[type="text"] { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 8px; }
+    input[type="text"], input[type="email"], input[type="password"] {
+      flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 8px; }
     button { padding: 10px 14px; font-size: 1rem; border: 0; border-radius: 8px; cursor: pointer; }
     .add { background: #2563eb; color: #fff; }
+    .secondary { background: #e5e7eb; color: #111; }
     ul { list-style: none; padding: 0; margin: 0; }
     li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eee; }
     li span { flex: 1; }
@@ -20,15 +22,45 @@
     .del { background: #fee2e2; color: #b91c1c; padding: 6px 10px; }
     #status { margin: 8px 0; font-size: .9rem; color: #555; }
     #status.error { color: #b91c1c; }
+    .hidden { display: none !important; }
+    #auth-form { flex-direction: column; }
+    #auth-form .buttons { display: flex; gap: 8px; }
+    #auth-form .buttons button { flex: 1; }
+    .userbar { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+               margin-bottom: 16px; font-size: .9rem; color: #555; }
+    .userbar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .userbar button { padding: 6px 10px; font-size: .9rem; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>To-Do List</h1>
-    <form id="add-form">
-      <input type="text" id="new-title" placeholder="อยากทำอะไร..." required>
-      <button class="add" type="submit">เพิ่ม</button>
-    </form>
+
+    <!-- ส่วนที่ 1: ยังไม่ล็อกอิน -->
+    <div id="auth-view" class="hidden">
+      <form id="auth-form">
+        <input type="email" id="auth-email" placeholder="อีเมล" autocomplete="email" required>
+        <input type="password" id="auth-password" placeholder="รหัสผ่าน (อย่างน้อย 6 ตัว)"
+               autocomplete="current-password" minlength="6" required>
+        <div class="buttons">
+          <button class="add" type="submit" id="btn-login">เข้าสู่ระบบ</button>
+          <button class="secondary" type="button" id="btn-signup">สมัครสมาชิก</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- ส่วนที่ 2: ล็อกอินแล้ว -->
+    <div id="app-view" class="hidden">
+      <div class="userbar">
+        <span id="user-email"></span>
+        <button class="secondary" type="button" id="btn-logout">ออกจากระบบ</button>
+      </div>
+      <form id="add-form">
+        <input type="text" id="new-title" placeholder="อยากทำอะไร..." required>
+        <button class="add" type="submit">เพิ่ม</button>
+      </form>
+    </div>
+
     <div id="status"></div>
     <ul id="todo-list"></ul>
   </div>
@@ -51,12 +83,47 @@
     const formEl = document.getElementById("add-form");
     const inputEl = document.getElementById("new-title");
 
+    const authViewEl = document.getElementById("auth-view");
+    const appViewEl = document.getElementById("app-view");
+    const authFormEl = document.getElementById("auth-form");
+    const emailEl = document.getElementById("auth-email");
+    const passwordEl = document.getElementById("auth-password");
+    const userEmailEl = document.getElementById("user-email");
+
     function showStatus(message, isError = false) {
       statusEl.textContent = message;
       statusEl.className = isError ? "error" : "";
     }
 
+    // แปลข้อความ error ของ Supabase Auth เป็นภาษาไทยที่อ่านง่าย
+    function authErrorMessage(error) {
+      const msg = (error.message || "").toLowerCase();
+      if (msg.includes("invalid login credentials")) return "อีเมลหรือรหัสผ่านไม่ถูกต้อง";
+      if (msg.includes("already registered")) return "อีเมลนี้สมัครไว้แล้ว ลองเข้าสู่ระบบแทน";
+      if (msg.includes("at least") && msg.includes("characters")) return "รหัสผ่านสั้นเกินไป (อย่างน้อย 6 ตัวอักษร)";
+      if (msg.includes("email not confirmed")) return "ยังไม่ได้ยืนยันอีเมล โปรดตรวจกล่องจดหมายของคุณ";
+      if (msg.includes("rate limit")) return "ลองบ่อยเกินไป โปรดรอสักครู่แล้วลองใหม่";
+      if (msg.includes("invalid") && msg.includes("email")) return "รูปแบบอีเมลไม่ถูกต้อง";
+      return error.message;
+    }
+
+    // สลับหน้าจอ: มี session = ล็อกอินแล้ว / ไม่มี = หน้าล็อกอิน
+    function showSignedIn(user) {
+      userEmailEl.textContent = user.email;
+      authViewEl.classList.add("hidden");
+      appViewEl.classList.remove("hidden");
+    }
+
+    function showSignedOut() {
+      listEl.innerHTML = ""; // ล้างรายการ กันข้อมูลของคนก่อนหน้าค้างบนจอ
+      userEmailEl.textContent = "";
+      appViewEl.classList.add("hidden");
+      authViewEl.classList.remove("hidden");
+      showStatus("");
+    }
+
     // ดึงรายการทั้งหมดจาก database แล้วแสดงบนหน้าจอ
+    // (ฐานข้อมูลส่งกลับมาเฉพาะรายการของคนที่ล็อกอิน เพราะมีกฎ RLS คุมอยู่)
     async function loadTodos() {
       showStatus("กำลังโหลด...");
       const { data, error } = await db
@@ -97,7 +164,62 @@
       }
     }
 
-    // เพิ่มรายการใหม่
+    // ===== ระบบสมาชิก =====
+
+    // เข้าสู่ระบบ (กดปุ่ม "เข้าสู่ระบบ" / กด Enter ในฟอร์ม)
+    authFormEl.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      showStatus("กำลังเข้าสู่ระบบ...");
+      const { error } = await db.auth.signInWithPassword({
+        email: emailEl.value.trim(),
+        password: passwordEl.value,
+      });
+      if (error) {
+        showStatus(authErrorMessage(error), true);
+        return;
+      }
+      passwordEl.value = ""; // หน้าจอจะสลับเองผ่าน onAuthStateChange
+    });
+
+    // สมัครสมาชิก
+    document.getElementById("btn-signup").addEventListener("click", async () => {
+      if (!authFormEl.reportValidity()) return; // ให้เบราว์เซอร์เช็กอีเมล/รหัสผ่านก่อน
+      showStatus("กำลังสมัครสมาชิก...");
+      const { data, error } = await db.auth.signUp({
+        email: emailEl.value.trim(),
+        password: passwordEl.value,
+      });
+      if (error) {
+        showStatus(authErrorMessage(error), true);
+        return;
+      }
+      passwordEl.value = "";
+      // ถ้าเปิด "Confirm email" ไว้ จะยังไม่มี session จนกว่าจะกดลิงก์ในอีเมล
+      if (!data.session) {
+        showStatus("สมัครสำเร็จ! โปรดตรวจอีเมลแล้วกดลิงก์ยืนยันก่อนเข้าสู่ระบบ");
+      }
+    });
+
+    // ออกจากระบบ
+    document.getElementById("btn-logout").addEventListener("click", async () => {
+      const { error } = await db.auth.signOut();
+      if (error) showStatus("ออกจากระบบไม่สำเร็จ: " + error.message, true);
+    });
+
+    // ตัวเดียวที่คุมการสลับหน้า: ทำงานตอนเปิดเว็บ (INITIAL_SESSION), ล็อกอิน, ออกจากระบบ
+    db.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        showSignedIn(session.user);
+        // ใช้ setTimeout เพื่อไม่ให้เรียก database ซ้อนใน callback (แนะนำโดย Supabase)
+        if (event !== "TOKEN_REFRESHED") setTimeout(loadTodos, 0);
+      } else {
+        showSignedOut();
+      }
+    });
+
+    // ===== รายการ To-Do =====
+
+    // เพิ่มรายการใหม่ (user_id ฐานข้อมูลเติมให้เองจากคนที่ล็อกอินอยู่)
     formEl.addEventListener("submit", async (event) => {
       event.preventDefault();
       const title = inputEl.value.trim();
@@ -126,8 +248,7 @@
       loadTodos();
     }
 
-    // เริ่มต้น: โหลดรายการเมื่อเปิดหน้าเว็บ
-    loadTodos();
+    // หมายเหตุ: ไม่เรียก loadTodos() ตรงนี้แล้ว — onAuthStateChange จะเรียกให้หลังรู้ว่าล็อกอินอยู่
   </script>
 </body>
 </html>
