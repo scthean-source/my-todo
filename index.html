@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>To-Do List (เก็บข้อมูลบน Supabase)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f4f5f7; margin: 0; padding: 24px; }
+    .card { max-width: 480px; margin: 0 auto; background: #fff; border-radius: 12px;
+            padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    h1 { margin-top: 0; font-size: 1.4rem; }
+    form { display: flex; gap: 8px; margin-bottom: 16px; }
+    input[type="text"] { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #ccc; border-radius: 8px; }
+    button { padding: 10px 14px; font-size: 1rem; border: 0; border-radius: 8px; cursor: pointer; }
+    .add { background: #2563eb; color: #fff; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #eee; }
+    li span { flex: 1; }
+    li.done span { text-decoration: line-through; color: #888; }
+    .del { background: #fee2e2; color: #b91c1c; padding: 6px 10px; }
+    #status { margin: 8px 0; font-size: .9rem; color: #555; }
+    #status.error { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>To-Do List</h1>
+    <form id="add-form">
+      <input type="text" id="new-title" placeholder="อยากทำอะไร..." required>
+      <button class="add" type="submit">เพิ่ม</button>
+    </form>
+    <div id="status"></div>
+    <ul id="todo-list"></ul>
+  </div>
+
+  <!-- โหลดไลบรารี Supabase (ตัวช่วยคุยกับ database) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <script>
+    // ====== 1) ใส่ค่าของคุณตรงนี้ (ดูวิธีหาในคู่มือ ขั้นที่ 4) ======
+    const SUPABASE_URL = "https://extuhgkbnlkxdkhbqluq.supabase.co";
+    const SUPABASE_KEY = "sb_publishable_jbjuUOtmVw3hIiGV0ZZejw_pbogV3zw"; // ขึ้นต้นด้วย sb_publishable_
+    // ห้ามใส่ secret key / service_role key ที่นี่เด็ดขาด
+    // ==============================================================
+
+    // สร้างตัวเชื่อมต่อกับ database
+    const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    const listEl = document.getElementById("todo-list");
+    const statusEl = document.getElementById("status");
+    const formEl = document.getElementById("add-form");
+    const inputEl = document.getElementById("new-title");
+
+    function showStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.className = isError ? "error" : "";
+    }
+
+    // ดึงรายการทั้งหมดจาก database แล้วแสดงบนหน้าจอ
+    async function loadTodos() {
+      showStatus("กำลังโหลด...");
+      const { data, error } = await db
+        .from("todos")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        showStatus("โหลดไม่สำเร็จ: " + error.message, true);
+        return;
+      }
+      showStatus(data.length === 0 ? "ยังไม่มีรายการ ลองเพิ่มดูสิ" : "");
+      renderTodos(data);
+    }
+
+    // วาดรายการลงหน้าเว็บ
+    function renderTodos(todos) {
+      listEl.innerHTML = "";
+      for (const todo of todos) {
+        const li = document.createElement("li");
+        if (todo.done) li.className = "done";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = todo.done;
+        checkbox.addEventListener("change", () => toggleTodo(todo.id, checkbox.checked));
+
+        const text = document.createElement("span");
+        text.textContent = todo.title; // ใช้ textContent เพื่อความปลอดภัย
+
+        const delBtn = document.createElement("button");
+        delBtn.className = "del";
+        delBtn.textContent = "ลบ";
+        delBtn.addEventListener("click", () => deleteTodo(todo.id));
+
+        li.append(checkbox, text, delBtn);
+        listEl.appendChild(li);
+      }
+    }
+
+    // เพิ่มรายการใหม่
+    formEl.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const title = inputEl.value.trim();
+      if (!title) return;
+
+      const { error } = await db.from("todos").insert({ title });
+      if (error) {
+        showStatus("เพิ่มไม่สำเร็จ: " + error.message, true);
+        return;
+      }
+      inputEl.value = "";
+      loadTodos();
+    });
+
+    // ติ๊กว่าเสร็จแล้ว / ยังไม่เสร็จ
+    async function toggleTodo(id, done) {
+      const { error } = await db.from("todos").update({ done }).eq("id", id);
+      if (error) showStatus("อัปเดตไม่สำเร็จ: " + error.message, true);
+      loadTodos();
+    }
+
+    // ลบรายการ
+    async function deleteTodo(id) {
+      const { error } = await db.from("todos").delete().eq("id", id);
+      if (error) showStatus("ลบไม่สำเร็จ: " + error.message, true);
+      loadTodos();
+    }
+
+    // เริ่มต้น: โหลดรายการเมื่อเปิดหน้าเว็บ
+    loadTodos();
+  </script>
+</body>
+</html>
